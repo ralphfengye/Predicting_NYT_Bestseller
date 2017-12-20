@@ -1,0 +1,448 @@
+---
+title: "BDA Final Project Modeling Feng Ye"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+df <- read.csv("combined_fiction_new3.csv", header=TRUE, sep=",")
+df$index <- (1/df$rank)*df$weeks_on_list
+
+#Extract numeric columns for imputation
+df2 <- df[c("rank", "weeks_on_list", "polarity_mean", "critic_review_count", 
+"character_critic", "plot_critic", "theme_critic", "setting_critic", 
+"style_critic", "overall_critic", "amazon_rating", "amazon_review_count", 
+"cust_review_count", "polarity_mean_cust", "character_cust", "plot_cust", 
+"theme_cust", "setting_cust", "style_cust", "overall_cust")]
+```
+
+```{r}
+library(mice)
+#Multiple Imputation
+imputed_output <- mice(df2, m=1, method='pmm', seed=500)
+
+```
+
+```{r}
+imp_tot <- complete(imputed_output, "long")
+
+#Join the imputed table back to the original table
+df3 <- merge(x=df, y=imp_tot, by = c("rank", "weeks_on_list",  "amazon_rating", 
+"amazon_review_count", "polarity_mean", "polarity_mean_cust"), all.x=TRUE)
+```
+
+```{r}
+#Drop unnecessary columns
+
+drops <- c("critic_review_count.x", "character_critic.x", "plot_critic.x", 
+"theme_critic.x", "setting_critic.x", "style_critic.x", "overall_critic.x", 
+"cust_review_count.x", "character_cust.x", "plot_cust.x", "theme_cust.x", 
+"setting_cust.x", "style_cust.x", "overall_cust.x", ".imp", ".id")
+df3 <- df3[ , !(names(df3) %in% drops)]
+```
+
+```{r}
+library(data.table)
+
+#Rename columns
+setnames(df3, old=c("critic_review_count.y", "character_critic.y", "plot_critic.y", 
+"theme_critic.y", "setting_critic.y", "style_critic.y", "overall_critic.y", 
+"cust_review_count.y", "character_cust.y", "plot_cust.y", "theme_cust.y", 
+"setting_cust.y", "style_cust.y", "overall_cust.y"), new=c("critic_review_count", 
+"character_critic", "plot_critic", 
+"theme_critic", "setting_critic", "style_critic", "overall_critic", 
+"cust_review_count", "character_cust", "plot_cust", "theme_cust", 
+"setting_cust", "style_cust", "overall_cust"))
+
+```
+
+
+```{r}
+library(caret)
+
+#Split into 80% training set and 20% testing set
+trainIndex = createDataPartition(df3$rank, p=0.8, 
+                                 list=FALSE,times=1)
+train = df3[trainIndex,]
+test = df3[-trainIndex,]
+```
+
+
+```{r}
+model.rank <- lm(rank~polarity_mean+critic_review_count+character_critic+plot_critic+theme_critic+setting_critic+style_critic+overall_critic+amazon_rating+amazon_review_count+cust_review_count+polarity_mean_cust+character_cust+plot_cust+theme_cust+setting_cust+style_cust+overall_cust, data=train)
+summary(model.rank)
+```
+
+```{r}
+model.week <- lm(weeks_on_list~polarity_mean+critic_review_count+character_critic+plot_critic+theme_critic+setting_critic+style_critic+overall_critic+amazon_rating+amazon_review_count+cust_review_count+polarity_mean_cust+character_cust+plot_cust+theme_cust+setting_cust+style_cust+overall_cust, data=train)
+summary(model.week)
+```
+
+```{r}
+model.rk_wk <- lm(rank~weeks_on_list, data=df)
+summary(model.rk_wk)
+df$rank_pred <- fitted(model.rk_wk)
+```
+
+```{r}
+model.index <- lm(index~polarity_mean+critic_review_count+character_critic+plot_critic+theme_critic+setting_critic+style_critic+overall_critic+amazon_rating+amazon_review_count+cust_review_count+polarity_mean_cust+character_cust+plot_cust+theme_cust+setting_cust+style_cust+overall_cust, data=train)
+summary(model.index)
+```
+
+```{r}
+library(MASS)
+#Perform stepwise regression with both forward and backward feature selection, using AIC
+
+
+fit_rank <- lm(rank~polarity_mean+critic_review_count+character_critic+plot_critic+theme_critic+setting_critic+style_critic+overall_critic+amazon_rating+amazon_review_count+cust_review_count+polarity_mean_cust+character_cust+plot_cust+theme_cust+setting_cust+style_cust+overall_cust, data=train)
+step <- stepAIC(fit_rank, direction="both")
+step$anova
+```
+
+```{r}
+#OLS regression for predicting rank
+
+model.rank.fit <- lm(rank ~ polarity_mean + critic_review_count + theme_critic + setting_critic + 
+    style_critic + amazon_rating + amazon_review_count + polarity_mean_cust + 
+    character_cust + plot_cust + theme_cust + setting_cust + 
+    style_cust + overall_cust, data=train)
+summary(model.rank.fit)
+```
+
+```{r}
+library(MASS)
+#Stepwise regression again for week
+
+fit_week <- lm(weeks_on_list~polarity_mean+critic_review_count+character_critic+plot_critic+theme_critic+setting_critic+style_critic+overall_critic+amazon_rating+amazon_review_count+cust_review_count+polarity_mean_cust+character_cust+plot_cust+theme_cust+setting_cust+style_cust+overall_cust, data=train)
+step <- stepAIC(fit_week, direction="both")
+step$anova
+```
+
+```{r}
+#OLS regression for predicting week
+model.week.fit <- lm(weeks_on_list ~ critic_review_count + theme_critic + amazon_review_count + 
+    character_cust + theme_cust + style_cust, data=train)
+summary(model.week.fit)
+```
+
+```{r}
+library(randomForest)
+#All variables included in random forest
+
+rank.all.rf <- randomForest(rank~polarity_mean+critic_review_count+character_critic+plot_critic+theme_critic+setting_critic+style_critic+overall_critic+amazon_rating+amazon_review_count+cust_review_count+polarity_mean_cust+character_cust+plot_cust+theme_cust+setting_cust+style_cust+overall_cust, data=train)
+
+week.all.rf <- randomForest(weeks_on_list~polarity_mean+critic_review_count+character_critic+plot_critic+theme_critic+setting_critic+style_critic+overall_critic+amazon_rating+amazon_review_count+cust_review_count+polarity_mean_cust+character_cust+plot_cust+theme_cust+setting_cust+style_cust+overall_cust, data=train)
+
+rank.all.rf
+week.all.rf
+```
+
+```{r}
+importance    <- importance(rank.all.rf)
+print (importance)
+varImpPlot(rank.all.rf)
+
+
+```
+
+```{r}
+#Find the optimal mtry value, or number of variables to use at each split
+rank.all.rf.tuned <- tuneRF(train[, c(3,4,5,6,26,27,28,29,30,31,32,33,34,35,36,37,38,39)], train$rank)
+rank.all.rf.tuned
+```
+
+```{r}
+#Tuned random forest regression 
+rank.all.rf.tuned <- randomForest(rank~polarity_mean+critic_review_count+character_critic+plot_critic+theme_critic+setting_critic+style_critic+overall_critic+amazon_rating+amazon_review_count+cust_review_count+polarity_mean_cust+character_cust+plot_cust+theme_cust+setting_cust+style_cust+overall_cust, data=train, mtry=12)
+rank.all.rf.tuned
+```
+
+
+```{r}
+#Some tempoary and experimental models to try with different parameters
+rank.rf.1 <- randomForest(rank~polarity_mean + amazon_review_count + polarity_mean_cust + plot_cust + style_cust, data=train)
+rank.rf.1
+
+rank.rf.2 <- randomForest(rank~polarity_mean+critic_review_count+plot_critic+theme_critic+overall_critic+amazon_rating+amazon_review_count+cust_review_count+polarity_mean_cust+character_cust+plot_cust+style_cust+overall_cust, data=train)
+rank.rf.2 
+```
+
+```{r}
+#train
+#train[,c(4,5,26,28,29,32,36,38)]
+train
+```
+
+
+```{r}
+#Recursive feature selection with caret, for both RF and SVM regressions
+library(caret)
+control <- rfeControl(functions=rfFuncs, method="cv", number=10)
+results <- rfe(train[,c(3,4,5,6,26,27,28,29,30,31,32,33,34,35,36,37,38,39) ], train$rank, rfeControl=control)
+print (results)
+
+```
+
+```{r}
+#Optimal set includes all 18 variables for predicting rank
+predictors(results)
+plot(results, type=c("g", "o"))
+#rank.rf.3 <- randomForest(, data=train)
+#rank.rf.3
+```
+
+```{r}
+results2 <- rfe(train[,c(3,4,5,6,26,27,28,29,30,31,32,33,34,35,36,37,38,39) ], train$weeks_on_list, rfeControl=control)
+print (results2)
+```
+
+```{r}
+#Optimal set includes 16 out of 18 variables for predicting weeks
+predictors(results2)
+plot(results2, type=c("g", "o"))
+```
+
+```{r}
+week.rf.select <- randomForest(weeks_on_list~amazon_review_count+critic_review_count+theme_cust+polarity_mean+theme_critic+plot_critic+overall_critic+style_cust+style_critic+character_critic+overall_cust+amazon_rating+plot_cust+setting_critic+polarity_mean_cust+character_cust, data=train)
+week.rf.select
+```
+
+```{r}
+week.rf.select.tuned <- tuneRF(train[, c(3,4,5,6,26,27,28,29,30,31,32,34,35,36,38,39)], train$rank)
+week.rf.select.tuned
+```
+
+```{r}
+#Tuned random forest regression for predicting weeks
+week.rf.select.tuned <- randomForest(weeks_on_list~amazon_review_count+critic_review_count+theme_cust+polarity_mean+theme_critic+plot_critic+overall_critic+style_cust+style_critic+character_critic+overall_cust+amazon_rating+plot_cust+setting_critic+polarity_mean_cust+character_cust, data=train, mtry=10)
+week.rf.select.tuned
+```
+
+
+```{r}
+library(mlr)
+train_numeric <- train[,c(2,4,5,26,28,29,32,36,38)]
+test_numeric <- test[,c(2,4,5,26,28,29,32,36,38)]
+train.task.week <- makeClassifTask(data=train_numeric, target="weeks_on_list")
+test.task.week <- makeClassifTask(data=test_numeric, target="weeks_on_list")
+```
+
+
+```{r}
+## 
+## Used the following code to search for optimal tuning parameters
+## Parameters not used due to higher RMSE than vanilla randomForest 
+## package
+getParamSet("classif.randomForest")
+
+#create a learner
+rf <- makeLearner("classif.randomForest", predict.type = "response", par.vals = list(ntree = 200, mtry = 3))
+rf$par.vals <- list(
+importance = TRUE
+)
+
+#set tunable parameters
+#grid search to find hyperparameters
+rf_param <- makeParamSet(
+makeIntegerParam("ntree",lower = 50, upper = 500),
+makeIntegerParam("mtry", lower = 3, upper = 10),
+makeIntegerParam("nodesize", lower = 10, upper = 50)
+)
+
+#let's do random search for 50 iterations
+rancontrol <- makeTuneControlRandom(maxit = 50L)
+
+#set 3 fold cross validation
+set_cv <- makeResampleDesc("CV",iters = 3L)
+
+#hypertuning
+rf_tune <- tuneParams(learner = rf, resampling = set_cv, task = train.task.week, par.set = rf_param, control = rancontrol, measures = acc)
+```
+
+```{r}
+#using hyperparameters for modeling
+rf.tree <- setHyperPars(rf, par.vals = rf_tune$x)
+
+#train a model
+rforest <- train(rf.tree, train.task.week)
+rfmodel <- predict(rforest, test.task.week)
+pred <- getPredictionResponse(rfmodel)
+pred <- c(droplevels(pred))
+sqrt(mean((pred-test$weeks_on_list)^2))
+```
+
+
+```{r}
+##Lasso regression for predicting rank
+library(caret)
+ctrl <- trainControl(method="cv", number=10)
+lasso.rank <- caret::train(train[, c(3,4,5,6,26,27,28,29,30,31,32,33,34,35,36,37,38,39)], train$rank, method="lasso", trControl=ctrl, preProc=c("center", "scale"))
+lasso.rank
+```
+
+```{r}
+predict.enet(lasso.rank$finalModel, type='coefficients', s=lasso.rank$bestTune$fraction, mode='fraction')
+```
+
+```{r}
+#Lasso regression for predicting weeks
+lasso.week <- caret::train(train[, c(3,4,5,6,26,27,28,29,30,31,32,33,34,35,36,37,38,39)], train$weeks_on_list, method="lasso", trControl=ctrl, preProc=c("center", "scale"))
+lasso.week
+```
+
+```{r}
+predict.enet(lasso.week$finalModel, type='coefficients', s=lasso.week$bestTune$fraction, mode='fraction')
+```
+
+```{r}
+library(e1071)
+
+#Support vector machine regression for rank
+rank.svm <- svm(rank~polarity_mean+critic_review_count+character_critic+plot_critic+theme_critic+setting_critic+style_critic+overall_critic+amazon_rating+amazon_review_count+cust_review_count+polarity_mean_cust+character_cust+plot_cust+theme_cust+setting_cust+style_cust+overall_cust, train)
+rank.svm
+```
+
+```{r}
+#Tune SVM regression with epsilon and cost parameters
+tuneResult.rank <- tune(svm, rank~polarity_mean+critic_review_count+character_critic+plot_critic+theme_critic+setting_critic+style_critic+overall_critic+amazon_rating+amazon_review_count+cust_review_count+polarity_mean_cust+character_cust+plot_cust+theme_cust+setting_cust+style_cust+overall_cust, data=train, ranges=list(epsilon=seq(0,1,0.1)), cost=2^(seq(0.5,8,0.5)))
+print (tuneResult.rank)
+```
+
+```{r}
+#Optimal SVM regression model for rank
+rank.svm.tuned <- tuneResult.rank$best.model
+rank.svm.tuned
+```
+
+```{r}
+week.svm <- svm(weeks_on_list ~ amazon_review_count+critic_review_count+theme_cust+polarity_mean+theme_critic+plot_critic+overall_critic+style_cust+style_critic+character_critic+overall_cust+amazon_rating+plot_cust+setting_critic+polarity_mean_cust+character_cust, data=train)
+week.svm
+```
+
+```{r}
+#Tuned SVM regression model for weeks
+tuneResult.week <- tune(svm, weeks_on_list ~ amazon_review_count+critic_review_count+theme_cust+polarity_mean+theme_critic+plot_critic+overall_critic+style_cust+style_critic+character_critic+overall_cust+amazon_rating+plot_cust+setting_critic+polarity_mean_cust+character_cust, data=train, ranges=list(epsilon=seq(0,1,0.1)), cost=2^(seq(0.5,8,0.5)))
+print (tuneResult.week)
+```
+
+```{r}
+#Optimal SVM regression model for weeks
+week.svm.tuned <- tuneResult.week$best.model
+week.svm.tuned
+```
+
+
+```{r}
+#Compute test RMSE and R2 for all four model types
+
+library(caret)
+lasso.rank.pred <- predict(lasso.rank, test)
+
+print ("Lasso: Rank RMSE")
+sqrt(mean((lasso.rank.pred-test$rank)^2))
+print ("R-squared")
+1 - sum((lasso.rank.pred-test$rank)^2)/sum((test$rank-mean(test$rank))^2)
+
+lasso.week.pred <- predict(lasso.week, test)
+print ("Lasso: Week RMSE")
+sqrt(mean((lasso.week.pred-test$weeks_on_list)^2))
+print ("R-squared")
+1 - sum((lasso.week.pred-test$weeks_on_list)^2)/sum((test$weeks_on_list-mean(test$weeks_on_list))^2)
+```
+
+```{r}
+ols.rank.pred <- predict(model.rank.fit, test)
+print ("OLS: Rank RMSE")
+sqrt(mean((ols.rank.pred-test$rank)^2))
+print ("R-squared")
+1 - sum((ols.rank.pred-test$rank)^2)/sum((test$rank-mean(test$rank))^2)
+
+
+ols.week.pred <- predict(model.week.fit, test)
+print ("OLS: Week RMSE")
+sqrt(mean((ols.week.pred-test$weeks_on_list)^2))
+print ("R-squared")
+1 - sum((ols.week.pred-test$weeks_on_list)^2)/sum((test$weeks_on_list-mean(test$weeks_on_list))^2)
+```
+
+```{r}
+
+rf.rank.pred <- predict(rank.all.rf.tuned, test)
+print ("RF: Rank RMSE")
+sqrt(mean((rf.rank.pred-test$rank)^2))
+print ("R-squared")
+1 - sum((rf.rank.pred-test$rank)^2)/sum((test$rank-mean(test$rank))^2)
+
+rf.week.pred <- predict(week.rf.select.tuned, test)
+print ("RF: Week RMSE")
+sqrt(mean((rf.week.pred-test$weeks_on_list)^2))
+print ("R-squared")
+1 - sum((rf.week.pred-test$weeks_on_list)^2)/sum((test$weeks_on_list-mean(test$weeks_on_list))^2)
+```
+
+```{r}
+svm.rank.pred <- predict(rank.svm.tuned, test)
+print ("SVM: Rank RMSE")
+sqrt(mean((svm.rank.pred-test$rank)^2))
+print ("R-squared")
+1 - sum((svm.rank.pred-test$rank)^2)/sum((test$rank-mean(test$rank))^2)
+
+svm.week.pred <- predict(week.svm.tuned, test)
+print ("SVM: Week RMSE")
+sqrt(mean((svm.week.pred-test$weeks_on_list)^2))
+print ("R-squared")
+1 - sum((svm.week.pred-test$weeks_on_list)^2)/sum((test$weeks_on_list-mean(test$weeks_on_list))^2)
+```
+```{r}
+df3$published_date <- as.Date(df3$published_date, format="%m/%d/%Y")
+df3$bestsellers_date <- as.Date(df3$bestsellers_date, format="%m/%d/%Y")
+df3$published_year <- format(df3$published_date, "%Y")
+df3$title_author <- paste(df3$title, df3$author, sep=" by ")
+```
+
+```{r}
+library(randomForest)
+
+#Append predictions to the original dataframe
+df3$rank_pred <- predict(rank.all.rf.tuned, df3)
+df3$week_pred <- predict(week.rf.select.tuned, df3)
+df3
+```
+
+```{r}
+library(stringi)
+
+#Built a smaller dataframe with only relevant variables
+var_shiny <- c("title", "author", "title_author", "primary_isbn13", "rank", "weeks_on_list", "rank_pred", "week_pred")
+df2 <- df3[var_shiny]
+
+#Replace and remove non-ascii characters from title, author and title_author 
+df2$title <- stri_trans_general(df2$title, "latin-ascii")
+df2$author <- stri_trans_general(df2$author, "latin-ascii")
+df2$title_author <- stri_trans_general(df2$title_author, "latin-ascii")
+df2$title <- iconv(df2$title, "latin1", "ASCII", sub="")
+df2$author <- iconv(df2$author, "latin1", "ASCII", sub="")
+df2$title_author <- iconv(df2$title_author, "latin1", "ASCII", sub="")
+saveRDS(df2, file="data_shiny.rds")
+df2
+```
+
+
+```{r}
+library(tidyverse)
+
+#Prototype graphs to be used in shiny
+ggplot(aes(x=reorder(title_author, -weeks_on_list), y=weeks_on_list), data=df3) + geom_density(alpha=0.2, col="#56B4E9") + theme(axis.ticks.x=element_blank(), axis.text.x=element_blank(), axis.title.x=element_blank())
+```
+
+```{r}
+ggplot(aes(x=reorder(title_author, rank), y=rank), data=df3) + geom_density(alpha=0.2, col="#009E73") + theme(axis.ticks.x=element_blank(), axis.text.x=element_blank(), axis.title.x=element_blank())
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
